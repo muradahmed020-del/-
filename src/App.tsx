@@ -224,6 +224,18 @@ export default function App() {
   const excelInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
 
+  // Active Direct File Handle (File System Access API)
+  const [currentFileHandle, setCurrentFileHandle] = useState<any | null>(null);
+  const [currentFileName, setCurrentFileName] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('hisaber_khata_file_name_v1') || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const saveExcelRef = useRef<() => void>(() => {});
+
   // Autosave to LocalStorage every 5 seconds or when state changes
   useEffect(() => {
     setAutosaveStatus({ text: 'সেভ হচ্ছে…', type: 'saving' });
@@ -271,7 +283,7 @@ export default function App() {
           handleRedo();
         } else if (key === 's') {
           e.preventDefault();
-          handleExportExcel();
+          saveExcelRef.current();
         }
       } else if (e.altKey) {
         if (key === 'n') {
@@ -621,20 +633,185 @@ export default function App() {
     }));
   };
 
-  // Excel Export
-  const handleExportExcel = () => {
+  // Download a separate stamped copy of Excel workbook
+  const handleExportExcelCopy = () => {
     try {
       const wb = buildWorkbook(sheets, notes);
       const stamp = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `হিসাবের_খাতা_${stamp}.xlsx`);
-      setAutosaveStatus({ text: 'এক্সেল ফাইল ডাউনলোড সম্পন্ন হয়েছে', type: 'saved' });
+      setAutosaveStatus({ text: 'নতুন এক্সেল কপি ডাউনলোড সম্পন্ন', type: 'saved' });
     } catch (err) {
       console.error(err);
       alert('এক্সেল ফাইল তৈরিতে সমস্যা হয়েছে।');
     }
   };
 
-  // Excel Import
+  // Direct In-Place Save to File (Overwrites the opened file without downloading (1).xlsx)
+  const handleSaveExcel = async () => {
+    // 1. If we have a connected FileSystemFileHandle: write directly back to that file on disk!
+    if (currentFileHandle) {
+      try {
+        setAutosaveStatus({ text: 'ফাইলে সেভ হচ্ছে…', type: 'saving' });
+        const opts = { mode: 'readwrite' };
+        let perm = await currentFileHandle.queryPermission(opts);
+        if (perm !== 'granted') {
+          perm = await currentFileHandle.requestPermission(opts);
+        }
+        if (perm !== 'granted') throw new Error('Permission denied');
+
+        const wb = buildWorkbook(sheets, notes);
+        const arrBuf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const writable = await currentFileHandle.createWritable();
+        await writable.write(arrBuf);
+        await writable.close();
+
+        const timeStr = new Date().toLocaleTimeString('bn-BD', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        setAutosaveStatus({
+          text: `"${currentFileName || 'ফাইল'}" ফাইলে সরাসরি সেভ সম্পন্ন — ${timeStr}`,
+          type: 'saved',
+        });
+        return;
+      } catch (err) {
+        console.error('Direct file save failed:', err);
+        setAutosaveStatus({ text: 'ফাইলে সরাসরি সেভ ব্যর্থ — আবার অনুমতি দিন', type: 'error' });
+      }
+    }
+
+    // 2. If no file handle is connected yet, but browser supports File System Access (Chrome/Edge/Opera):
+    // Offer showSaveFilePicker so the user can select their existing file to overwrite or pick location!
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: currentFileName || `হিসাবের_খাতা_${new Date().toISOString().slice(0, 10)}.xlsx`,
+          types: [
+            {
+              description: 'Excel Workbook (*.xlsx)',
+              accept: {
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+              },
+            },
+          ],
+        });
+
+        setAutosaveStatus({ text: 'ফাইলে সেভ হচ্ছে…', type: 'saving' });
+        const wb = buildWorkbook(sheets, notes);
+        const arrBuf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const writable = await handle.createWritable();
+        await writable.write(arrBuf);
+        await writable.close();
+
+        setCurrentFileHandle(handle);
+        setCurrentFileName(handle.name);
+        try {
+          localStorage.setItem('hisaber_khata_file_name_v1', handle.name);
+        } catch {}
+
+        const timeStr = new Date().toLocaleTimeString('bn-BD', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        setAutosaveStatus({
+          text: `"${handle.name}" ফাইলে সরাসরি সেভ সম্পন্ন — ${timeStr}`,
+          type: 'saved',
+        });
+        alert(
+          `✅ "${handle.name}" ফাইলের উপরে সরাসরি সেভ সফল হয়েছে!\n\nপরবর্তী প্রতিবার "সেভ করুন" চাপলে সরাসরি এই ফাইলের উপরেই আপডেট সেভ হবে, কোনো নতুন ফাইল ডাউনলোড হবে না।`
+        );
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return; // User closed picker
+        console.warn('showSaveFilePicker error:', err);
+      }
+    }
+
+    // 3. Fallback for non-supported browsers
+    handleExportExcelCopy();
+  };
+  saveExcelRef.current = handleSaveExcel;
+
+  // Open/Import Excel with File System Access (captures handle for direct in-place save)
+  const handleOpenExcelFile = async () => {
+    if (typeof window !== 'undefined' && 'showOpenFilePicker' in window) {
+      try {
+        const [handle] = await (window as any).showOpenFilePicker({
+          types: [
+            {
+              description: 'Excel Files (*.xlsx)',
+              accept: {
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+              },
+            },
+          ],
+          multiple: false,
+        });
+
+        // Request write permission upfront within the user click gesture
+        let writeOK = false;
+        try {
+          const opts = { mode: 'readwrite' };
+          let perm = await handle.queryPermission(opts);
+          if (perm !== 'granted') {
+            perm = await handle.requestPermission(opts);
+          }
+          writeOK = perm === 'granted';
+        } catch (pe) {
+          console.warn('Permission query error:', pe);
+        }
+
+        const file = await handle.getFile();
+        const buffer = await file.arrayBuffer();
+        const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+        const importedSheets = parseWorkbookIntoSheets(wb);
+        const importedNotes = parseNotesFromWorkbook(wb);
+
+        if (importedSheets.length === 0 && (!importedNotes || importedNotes.length === 0)) {
+          alert('এই ফাইলে হিসাবের খাতার কোনো ডেটা পাওয়া যায়নি।');
+          return;
+        }
+
+        pushSnapshot();
+        if (importedSheets.length > 0) {
+          setSheets(importedSheets);
+          setActiveIdx(0);
+        }
+        if (importedNotes && importedNotes.length > 0) {
+          setNotes(importedNotes);
+        }
+
+        setCurrentFileHandle(handle);
+        setCurrentFileName(file.name);
+        try {
+          localStorage.setItem('hisaber_khata_file_name_v1', file.name);
+        } catch {}
+
+        setAutosaveStatus({
+          text: writeOK
+            ? `"${file.name}" যুক্ত — এখন "সেভ" চাপলে সরাসরি এই ফাইলেই সেভ হবে`
+            : `"${file.name}" ইমপোর্ট হয়েছে`,
+          type: 'saved',
+        });
+
+        alert(
+          `✅ "${file.name}" সফলভাবে ইমপোর্ট হয়েছে!\n\n💡 দারুণ খবর: ফাইলটি সরাসরি সেভ করার সাথে যুক্ত হয়েছে। এখন থেকে উপরে থাকা "সেভ করুন" (বা Ctrl+S) চাপলে সরাসরি আপনার এই "${file.name}" ফাইলের উপরেই আপডেট সেভ হবে, নতুন কোনো ফাইল ডাউনলোড হবে না!`
+        );
+        setCurrentSection('ledger');
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return; // User closed picker
+        console.warn('showOpenFilePicker failed, falling back to standard input:', err);
+      }
+    }
+
+    // Fallback: standard input file dialog
+    excelInputRef.current?.click();
+  };
+
+  // Excel Import fallback (when opened via standard file input)
   const handleImportExcelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -661,10 +838,16 @@ export default function App() {
           setNotes(importedNotes);
         }
 
+        setCurrentFileHandle(null);
+        setCurrentFileName(file.name);
+        try {
+          localStorage.setItem('hisaber_khata_file_name_v1', file.name);
+        } catch {}
+
         alert(
           `সফলভাবে ইমপোর্ট হয়েছেঃ ${toBnDigits(importedSheets.length)} জন কাস্টমার${
             importedNotes ? ` এবং ${toBnDigits(importedNotes.length)} টি নোট` : ''
-          }!`
+          }!\n\n💡 সরাসরি এই ফাইলে সেভ করতে "সেভ করুন" বাটনে ক্লিক করে ফাইলটি সিলেক্ট করে দিন।`
         );
         setCurrentSection('ledger');
       } catch (err) {
@@ -674,6 +857,16 @@ export default function App() {
       e.target.value = '';
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  // Disconnect active file handle
+  const handleDisconnectFile = () => {
+    setCurrentFileHandle(null);
+    setCurrentFileName(null);
+    try {
+      localStorage.removeItem('hisaber_khata_file_name_v1');
+    } catch {}
+    setAutosaveStatus({ text: 'ফাইল সংযোগ বিচ্ছিন্ন — ব্রাউজারে অটো-সেভ সক্রিয়', type: 'saved' });
   };
 
   // JSON Full Backup
@@ -859,8 +1052,12 @@ export default function App() {
           lastBackupDays={lastBackupDays}
           currentSection={currentSection}
           onSelectSection={setCurrentSection}
-          onExportExcel={handleExportExcel}
-          onImportExcelClick={() => excelInputRef.current?.click()}
+          currentFileName={currentFileName}
+          hasFileHandle={!!currentFileHandle}
+          onSaveExcel={handleSaveExcel}
+          onExportExcelCopy={handleExportExcelCopy}
+          onOpenExcelFile={handleOpenExcelFile}
+          onDisconnectFile={handleDisconnectFile}
           onBackupJson={handleBackupJson}
           onRestoreJsonClick={() => jsonInputRef.current?.click()}
           onManagePin={handleManagePin}

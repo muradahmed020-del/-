@@ -67,7 +67,7 @@ export const GuideSection: React.FC<GuideSectionProps> = ({ onClose }) => {
             </div>
             <div className="flex justify-between">
               <span className="font-bold text-[#1F5C53]">Ctrl + S</span>
-              <span className="text-[#2A251E]">এক্সেল সেভ / ডাউনলোড</span>
+              <span className="text-[#2A251E]">ফাইলে সরাসরি সেভ</span>
             </div>
           </div>
         </div>
@@ -75,10 +75,10 @@ export const GuideSection: React.FC<GuideSectionProps> = ({ onClose }) => {
         {/* Excel Backup */}
         <div className="rounded-xl border border-[#DCD1B2] bg-[#FAF7F0] p-4 space-y-2">
           <h3 className="font-serif-bn font-bold text-sm text-[#1F5C53] flex items-center gap-2">
-            <RefreshCw className="h-4 w-4" /> 💾 স্থায়ী এক্সেল ও JSON কপি
+            <RefreshCw className="h-4 w-4" /> 💾 সরাসরি ফাইলে সেভ (In-Place Save)
           </h3>
           <p className="text-[#2A251E] leading-relaxed">
-            অন্য কম্পিউটারে নিতে বা সম্পূর্ণ নিরাপত্তা নিশ্চিত করতে মাঝে মাঝে <b>"⇩ এক্সেল ফাইল হিসেবে সেভ করুন"</b> বা <b>"সম্পূর্ণ ব্যাকআপ (JSON)"</b> চেপে ডাউনলোড করে রাখুন।
+            Chrome বা Edge ব্রাউজারে এক্সেল ফাইল খুললে <b>"💾 সেভ করুন"</b> বা <b>Ctrl + S</b> চাপলেই সরাসরি আপনার মূল এক্সেল ফাইলের উপরেই আপডেট সেভ হবে, কোনো বাড়তি ডাউনলোড হবে না।
           </p>
         </div>
 

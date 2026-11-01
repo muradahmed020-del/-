@@ -18,6 +18,7 @@ import {
   X,
   Smartphone,
   ShieldCheck,
+  Save,
 } from 'lucide-react';
 import { Sheet, ShopInfo, ViewSection, NotifSettings } from '../types';
 import { fmt, toBnDigits } from '../utils/bengali';
@@ -30,8 +31,12 @@ interface HeaderCoverProps {
   lastBackupDays: number | null;
   currentSection: ViewSection;
   onSelectSection: (section: ViewSection) => void;
-  onExportExcel: () => void;
-  onImportExcelClick: () => void;
+  currentFileName: string | null;
+  hasFileHandle: boolean;
+  onSaveExcel: () => void;
+  onExportExcelCopy: () => void;
+  onOpenExcelFile: () => void;
+  onDisconnectFile: () => void;
   onBackupJson: () => void;
   onRestoreJsonClick: () => void;
   onManagePin: () => void;
@@ -64,8 +69,12 @@ export const HeaderCover: React.FC<HeaderCoverProps> = ({
   lastBackupDays,
   currentSection,
   onSelectSection,
-  onExportExcel,
-  onImportExcelClick,
+  currentFileName,
+  hasFileHandle,
+  onSaveExcel,
+  onExportExcelCopy,
+  onOpenExcelFile,
+  onDisconnectFile,
   onBackupJson,
   onRestoreJsonClick,
   onManagePin,
@@ -207,6 +216,47 @@ export const HeaderCover: React.FC<HeaderCoverProps> = ({
 
         {/* Right Utility Toolbar */}
         <div className="flex items-center gap-2 relative">
+          {/* Connected file indicator badge */}
+          {currentFileName && (
+            <div className="hidden sm:flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs text-[#0F3E36]">
+              <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse"></span>
+              <span className="font-semibold truncate max-w-[110px] md:max-w-[160px]" title={currentFileName}>
+                {currentFileName}
+              </span>
+              <span className="rounded bg-emerald-200/80 text-emerald-900 px-1.5 py-0.2 text-[9px] font-bold">
+                {hasFileHandle ? 'সরাসরি সেভ' : 'লিংকযুক্ত'}
+              </span>
+              <button
+                type="button"
+                onClick={onDisconnectFile}
+                className="text-stone-400 hover:text-red-600 transition ml-0.5"
+                title="ফাইল সংযোগ বিচ্ছিন্ন করুন"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Primary Save Button */}
+          <button
+            type="button"
+            onClick={onSaveExcel}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition shadow-xs ${
+              hasFileHandle
+                ? 'bg-[#0F3E36] text-white hover:bg-[#16554A] ring-1 ring-black/10'
+                : 'border border-[#C28B1E] bg-[#FAF5EB] text-[#8F630C] hover:bg-[#F3EAD3]'
+            }`}
+            title={
+              hasFileHandle
+                ? `"${currentFileName}" ফাইলে সরাসরি সেভ হবে (নতুন কোনো ডাউনলোড হবে না)`
+                : 'এক্সেল ফাইলে সরাসরি সেভ করুন (Ctrl+S)'
+            }
+          >
+            <Save className="h-3.5 w-3.5" />
+            <span>{hasFileHandle ? 'ফাইলে সেভ' : 'সেভ করুন'}</span>
+            <span className="hidden lg:inline text-[10px] opacity-75 font-mono">(Ctrl+S)</span>
+          </button>
+
           {/* Notification Bell */}
           <div className="relative">
             <button
@@ -340,27 +390,58 @@ export const HeaderCover: React.FC<HeaderCoverProps> = ({
             </button>
 
             {showBackupMenu && (
-              <div className="absolute right-0 top-11 z-50 w-56 rounded-xl border border-[#E6DFD3] bg-white p-1.5 shadow-xl text-xs space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="absolute right-0 top-11 z-50 w-64 rounded-xl border border-[#E6DFD3] bg-white p-1.5 shadow-xl text-xs space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
                 <button
                   type="button"
                   onClick={() => {
-                    onExportExcel();
+                    onSaveExcel();
                     setShowBackupMenu(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-semibold text-[#1C1917] hover:bg-[#F8F6F0]"
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-bold text-[#0F3E36] hover:bg-emerald-50 transition"
                 >
-                  <Download className="h-3.5 w-3.5 text-[#C28B1E]" /> ⇩ এক্সেল হিসেবে সেভ
+                  <Save className="h-3.5 w-3.5 text-[#0F3E36]" />
+                  <span>
+                    {hasFileHandle
+                      ? `💾 "${currentFileName}" ফাইলে সেভ করুন`
+                      : '💾 এক্সেল ফাইলে সরাসরি সেভ (Ctrl+S)'}
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    onImportExcelClick();
+                    onOpenExcelFile();
                     setShowBackupMenu(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-medium text-[#1C1917] hover:bg-[#F8F6F0]"
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-medium text-[#1C1917] hover:bg-[#F8F6F0] transition"
                 >
-                  <Upload className="h-3.5 w-3.5 text-[#0F3E36]" /> ⇪ এক্সেল ফাইল ইমপোর্ট
+                  <Upload className="h-3.5 w-3.5 text-[#0F3E36]" />
+                  <span>⇪ এক্সেল ফাইল খুলুন (সরাসরি সেভ সহ)</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onExportExcelCopy();
+                    setShowBackupMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-medium text-[#78716C] hover:bg-[#F8F6F0] transition"
+                  title="আলাদা একটি নতুন এক্সেল ফাইল হিসেবে ডাউনলোড করুন"
+                >
+                  <Download className="h-3.5 w-3.5 text-[#C28B1E]" />
+                  <span>⇩ নতুন এক্সেল কপি ডাউনলোড</span>
+                </button>
+                {currentFileName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDisconnectFile();
+                      setShowBackupMenu(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-medium text-red-700 hover:bg-red-50 transition"
+                  >
+                    <X className="h-3.5 w-3.5 text-red-500" />
+                    <span>ফাইল সংযোগ বিচ্ছিন্ন করুন</span>
+                  </button>
+                )}
                 <div className="my-1 border-t border-[#F0EAE1]" />
                 <button
                   type="button"
