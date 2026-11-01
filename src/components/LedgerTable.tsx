@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   Printer,
@@ -17,9 +17,15 @@ import {
   Wallet,
   AlertCircle,
   Sparkles,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  CornerDownLeft,
+  Keyboard,
 } from 'lucide-react';
 import { Sheet, Row } from '../types';
-import { fmt, toBnDigits, toEnDigits, due, isRowFilled } from '../utils/bengali';
+import { fmt, toBnDigits, toEnDigits, due, isRowFilled, todayDMY } from '../utils/bengali';
 
 interface LedgerTableProps {
   sheet: Sheet;
@@ -193,6 +199,211 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
       newRows[rowIndex] = { ...newRows[rowIndex], [field]: val };
     }
     onUpdateRows(newRows);
+  };
+
+  // Keyboard navigation & Enter-to-create-row state
+  const [focusedCell, setFocusedCell] = useState<{ vIdx: number; col: number; origIdx: number } | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<{ vIdx: number; col: number; selectText?: boolean } | null>(null);
+  const COL_NAMES = ['তারিখ', 'বিষয়', 'ক্যাটাগরি', 'মূল্য', 'নগদ', 'মন্তব্য'];
+
+  useEffect(() => {
+    if (pendingFocus && tableRef.current) {
+      const el = tableRef.current.querySelector<HTMLElement>(
+        `[data-row-idx="${pendingFocus.vIdx}"][data-col-idx="${pendingFocus.col}"]`
+      );
+      if (el) {
+        el.focus();
+        if (pendingFocus.selectText && el instanceof HTMLInputElement) {
+          el.select();
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        setFocusedCell({
+          vIdx: pendingFocus.vIdx,
+          col: pendingFocus.col,
+          origIdx: visibleIndices[pendingFocus.vIdx] ?? pendingFocus.vIdx,
+        });
+        setPendingFocus(null);
+      }
+    }
+  }, [pendingFocus, account.rows, visibleIndices]);
+
+  const focusCell = (vIdx: number, colIdx: number, selectText = true) => {
+    if (!tableRef.current) return;
+    const safeVIdx = Math.max(0, Math.min(visibleIndices.length - 1, vIdx));
+    const safeColIdx = Math.max(0, Math.min(5, colIdx));
+
+    const el = tableRef.current.querySelector<HTMLElement>(
+      `[data-row-idx="${safeVIdx}"][data-col-idx="${safeColIdx}"]`
+    );
+    if (el) {
+      el.focus();
+      if (selectText && el instanceof HTMLInputElement) {
+        el.select();
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      setFocusedCell({
+        vIdx: safeVIdx,
+        col: safeColIdx,
+        origIdx: visibleIndices[safeVIdx] ?? safeVIdx,
+      });
+    }
+  };
+
+  const handleEnterCreateRow = () => {
+    if (keywordFilter) setKeywordFilter('');
+
+    let targetInsertOrigIdx = account.rows.length;
+    let targetVIdx = visibleIndices.length;
+
+    if (focusedCell) {
+      targetInsertOrigIdx = focusedCell.origIdx + 1;
+      targetVIdx = focusedCell.vIdx + 1;
+    }
+
+    const prevRow = account.rows[targetInsertOrigIdx - 1] || account.rows[0];
+    const defaultDate = prevRow?.date || todayDMY();
+    const defaultCat =
+      categoryFilter && categoryFilter !== '__UNASSIGNED__'
+        ? categoryFilter
+        : prevRow?.category || '';
+
+    const newRow: Row = {
+      date: defaultDate,
+      subject: '',
+      category: defaultCat,
+      price: '',
+      cash: '',
+      comment: '',
+    };
+
+    const newRows = [...account.rows];
+    newRows.splice(targetInsertOrigIdx, 0, newRow);
+    onUpdateRows(newRows);
+
+    setPendingFocus({
+      vIdx: targetVIdx,
+      col: 1, // Focus subject field so the user can immediately type
+      selectText: true,
+    });
+  };
+
+  const handleNavUp = () => {
+    if (!focusedCell) {
+      focusCell(0, 0, true);
+      return;
+    }
+    if (focusedCell.vIdx > 0) {
+      focusCell(focusedCell.vIdx - 1, focusedCell.col, true);
+    }
+  };
+
+  const handleNavDown = () => {
+    if (!focusedCell) {
+      focusCell(0, 0, true);
+      return;
+    }
+    if (focusedCell.vIdx < visibleIndices.length - 1) {
+      focusCell(focusedCell.vIdx + 1, focusedCell.col, true);
+    } else {
+      handleEnterCreateRow();
+    }
+  };
+
+  const handleNavLeft = () => {
+    if (!focusedCell) {
+      focusCell(0, 0, true);
+      return;
+    }
+    if (focusedCell.col > 0) {
+      focusCell(focusedCell.vIdx, focusedCell.col - 1, true);
+    } else if (focusedCell.vIdx > 0) {
+      focusCell(focusedCell.vIdx - 1, 5, true);
+    }
+  };
+
+  const handleNavRight = () => {
+    if (!focusedCell) {
+      focusCell(0, 0, true);
+      return;
+    }
+    if (focusedCell.col < 5) {
+      focusCell(focusedCell.vIdx, focusedCell.col + 1, true);
+    } else if (focusedCell.vIdx < visibleIndices.length - 1) {
+      focusCell(focusedCell.vIdx + 1, 0, true);
+    } else {
+      handleEnterCreateRow();
+    }
+  };
+
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLElement>,
+    vIdx: number,
+    colIdx: number,
+    origIdx: number
+  ) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (vIdx > 0) focusCell(vIdx - 1, colIdx, true);
+        return;
+      }
+
+      // Enter key: if on last row, or in last column (comment), or Ctrl+Enter:
+      if (vIdx === visibleIndices.length - 1 || colIdx === 5 || e.ctrlKey || e.metaKey) {
+        handleEnterCreateRow();
+      } else {
+        if (colIdx < 5) {
+          focusCell(vIdx, colIdx + 1, true);
+        } else {
+          handleEnterCreateRow();
+        }
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (vIdx > 0) {
+        focusCell(vIdx - 1, colIdx, true);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (vIdx < visibleIndices.length - 1) {
+        focusCell(vIdx + 1, colIdx, true);
+      } else {
+        handleEnterCreateRow();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowLeft') {
+      const el = e.currentTarget;
+      if (e.altKey || !(el instanceof HTMLInputElement) || (el.selectionStart === 0 && el.selectionEnd === 0)) {
+        e.preventDefault();
+        if (colIdx > 0) {
+          focusCell(vIdx, colIdx - 1, false);
+        } else if (vIdx > 0) {
+          focusCell(vIdx - 1, 5, false);
+        }
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowRight') {
+      const el = e.currentTarget;
+      if (e.altKey || !(el instanceof HTMLInputElement) || (el.selectionStart === el.value.length)) {
+        e.preventDefault();
+        if (colIdx < 5) {
+          focusCell(vIdx, colIdx + 1, false);
+        } else if (vIdx < visibleIndices.length - 1) {
+          focusCell(vIdx + 1, 0, false);
+        }
+      }
+      return;
+    }
   };
 
   return (
@@ -545,6 +756,85 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
         </div>
       </div>
 
+      {/* Keyboard & Arrow Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[#F0EAE1] bg-gradient-to-r from-[#FAF8F5] via-white to-[#FAF8F5] px-3 sm:px-4 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Enter Button (Creates new entry row) */}
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleEnterCreateRow}
+            title="এন্টার বাটনঃ নতুন এন্ট্রি সারি তৈরি করুন (কীবোর্ড শর্টকাট: Enter)"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-700 to-[#0F3E36] px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:from-emerald-800 hover:to-[#0A2B25] active:scale-95 transition cursor-pointer"
+          >
+            <CornerDownLeft className="h-3.5 w-3.5" />
+            <span>এন্টার (নতুন সারি)</span>
+            <kbd className="hidden sm:inline-block rounded bg-emerald-950/30 px-1.5 py-0.5 text-[10px] font-mono text-emerald-100">
+              ↵ Enter
+            </kbd>
+          </button>
+
+          {/* Arrow Direction Buttons (Up, Down, Left, Right) */}
+          <div className="inline-flex items-center rounded-xl border border-[#D8D0C2] bg-white p-0.5 shadow-2xs">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleNavLeft}
+              title="বামে / সাইডে যান (কীবোর্ড: ← Arrow Left)"
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#1C1917] hover:bg-neutral-100 active:bg-neutral-200 transition cursor-pointer"
+            >
+              <ArrowLeft className="h-3.5 w-3.5 text-[#0F3E36]" />
+              <span className="hidden sm:inline">বামে</span>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleNavUp}
+              title="উপরে যান (কীবোর্ড: ↑ Arrow Up)"
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#1C1917] hover:bg-neutral-100 active:bg-neutral-200 transition border-l border-[#F0EAE1] cursor-pointer"
+            >
+              <ArrowUp className="h-3.5 w-3.5 text-[#0F3E36]" />
+              <span className="hidden sm:inline">উপরে</span>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleNavDown}
+              title="নিচে যান (কীবোর্ড: ↓ Arrow Down)"
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#1C1917] hover:bg-neutral-100 active:bg-neutral-200 transition border-l border-[#F0EAE1] cursor-pointer"
+            >
+              <ArrowDown className="h-3.5 w-3.5 text-[#0F3E36]" />
+              <span className="hidden sm:inline">নিচে</span>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleNavRight}
+              title="ডানে / সাইডে যান (কীবোর্ড: → Arrow Right)"
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#1C1917] hover:bg-neutral-100 active:bg-neutral-200 transition border-l border-[#F0EAE1] cursor-pointer"
+            >
+              <ArrowRight className="h-3.5 w-3.5 text-[#0F3E36]" />
+              <span className="hidden sm:inline">ডানে</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Active Focus Status & Tip */}
+        <div className="flex items-center gap-2 text-[11px] text-[#78716C]">
+          {focusedCell ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 text-emerald-900 font-medium shadow-2xs">
+              <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse" />
+              সক্রিয় ঘর: <b className="font-bold">সারি {toBnDigits(focusedCell.vIdx + 1)} ({COL_NAMES[focusedCell.col]})</b>
+            </span>
+          ) : (
+            <span className="hidden md:inline-flex items-center gap-1.5 text-neutral-600">
+              <Keyboard className="h-3.5 w-3.5 text-[#0F3E36]" />
+              কীবোর্ডে <b className="text-[#1C1917]">Enter</b> চাপলে নতুন সারি তৈরি হবে এবং <b className="text-[#1C1917]">↑ ↓ ← →</b> দিয়ে যেকোনো ঘরে চলাচল করতে পারবেন
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Ledger Spreadsheet Table */}
       <div className="flex-1 overflow-x-auto min-h-[340px]">
         <table ref={tableRef} className="w-full border-collapse text-xs sm:text-sm">
@@ -569,7 +859,7 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
                 </td>
               </tr>
             ) : (
-              visibleIndices.map((origIdx) => {
+              visibleIndices.map((origIdx, vIdx) => {
                 const row = account.rows[origIdx];
                 const d = due(row);
                 const sl = serialMap.get(origIdx) || '';
@@ -588,24 +878,39 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
                     <td className="p-0">
                       <input
                         type="text"
+                        data-row-idx={vIdx}
+                        data-col-idx={0}
+                        data-orig-idx={origIdx}
                         value={row.date}
                         placeholder="২৩/০৭/২০২৬"
+                        onFocus={() => setFocusedCell({ vIdx, col: 0, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 0, origIdx)}
                         onChange={(e) => handleCellChange(origIdx, 'date', e.target.value)}
-                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#1C1917] focus:bg-white focus:outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#1C1917] focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs transition-all"
                       />
                     </td>
                     <td className="p-0">
                       <input
                         type="text"
+                        data-row-idx={vIdx}
+                        data-col-idx={1}
+                        data-orig-idx={origIdx}
                         value={row.subject}
                         placeholder="যেমনঃ চাল ২৫ কেজি / মালামাল"
+                        onFocus={() => setFocusedCell({ vIdx, col: 1, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 1, origIdx)}
                         onChange={(e) => handleCellChange(origIdx, 'subject', e.target.value)}
-                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#1C1917] font-medium focus:bg-white focus:outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#1C1917] font-medium focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs transition-all"
                       />
                     </td>
                     <td className="p-0">
                       <select
+                        data-row-idx={vIdx}
+                        data-col-idx={2}
+                        data-orig-idx={origIdx}
                         value={row.category || ''}
+                        onFocus={() => setFocusedCell({ vIdx, col: 2, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 2, origIdx)}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === '__ADD_NEW__') {
@@ -620,7 +925,7 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
                             handleCellChange(origIdx, 'category', val);
                           }
                         }}
-                        className={`w-full bg-transparent px-2.5 py-2 text-xs truncate transition-colors focus:bg-white focus:outline-none cursor-pointer ${
+                        className={`w-full bg-transparent px-2.5 py-2 text-xs truncate transition-all focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs cursor-pointer ${
                           row.category ? 'font-bold text-[#0F3E36]' : 'text-[#A8A29E]'
                         }`}
                         title={row.category || 'ক্যাটাগরি নির্বাচন করুন'}
@@ -637,19 +942,29 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
                     <td className="p-0">
                       <input
                         type="text"
+                        data-row-idx={vIdx}
+                        data-col-idx={3}
+                        data-orig-idx={origIdx}
                         value={row.price}
                         placeholder="0"
+                        onFocus={() => setFocusedCell({ vIdx, col: 3, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 3, origIdx)}
                         onChange={(e) => handleCellChange(origIdx, 'price', e.target.value)}
-                        className="w-full bg-transparent px-3 py-2 text-right font-mono-num text-xs sm:text-sm font-semibold text-[#1C1917] focus:bg-white focus:outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-right font-mono-num text-xs sm:text-sm font-semibold text-[#1C1917] focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs transition-all"
                       />
                     </td>
                     <td className="p-0">
                       <input
                         type="text"
+                        data-row-idx={vIdx}
+                        data-col-idx={4}
+                        data-orig-idx={origIdx}
                         value={row.cash}
                         placeholder="0"
+                        onFocus={() => setFocusedCell({ vIdx, col: 4, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 4, origIdx)}
                         onChange={(e) => handleCellChange(origIdx, 'cash', e.target.value)}
-                        className="w-full bg-transparent px-3 py-2 text-right font-mono-num text-xs sm:text-sm font-semibold text-emerald-700 focus:bg-white focus:outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-right font-mono-num text-xs sm:text-sm font-semibold text-emerald-700 focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs transition-all"
                       />
                     </td>
                     <td className="py-2 px-3 text-right font-mono-num font-bold text-[#991B1B]">
@@ -658,10 +973,15 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
                     <td className="p-0">
                       <input
                         type="text"
+                        data-row-idx={vIdx}
+                        data-col-idx={5}
+                        data-orig-idx={origIdx}
                         value={row.comment}
                         placeholder=""
+                        onFocus={() => setFocusedCell({ vIdx, col: 5, origIdx })}
+                        onKeyDown={(e) => handleCellKeyDown(e, vIdx, 5, origIdx)}
                         onChange={(e) => handleCellChange(origIdx, 'comment', e.target.value)}
-                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#57534E] focus:bg-white focus:outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-xs sm:text-sm text-[#57534E] focus:bg-amber-50/70 focus:outline-none focus:ring-1.5 focus:ring-[#0F3E36] rounded-xs transition-all"
                       />
                     </td>
                     <td className="py-1 px-2 text-center">
@@ -711,13 +1031,24 @@ export const LedgerTable: React.FC<LedgerTableProps> = ({
 
       {/* Footer Instructions */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#F0EAE1] bg-[#FAF8F5] px-4 py-3 text-xs text-[#78716C]">
-        <button
-          type="button"
-          onClick={handleAddRowTop}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-[#0F3E36] px-3.5 py-1.5 font-bold text-white hover:bg-[#0A2B25] transition shadow-xs"
-        >
-          <Plus className="h-3.5 w-3.5" /> নতুন সারি যোগ করুন
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleEnterCreateRow}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#0F3E36] px-3.5 py-1.5 font-bold text-white hover:bg-[#0A2B25] transition shadow-xs cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" /> নতুন সারি যোগ করুন
+          </button>
+          <span className="hidden sm:inline text-neutral-400">|</span>
+          <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-neutral-600">
+            <span>শর্টকাটঃ</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-white border border-[#D8D0C2] font-mono text-[10px] shadow-2xs font-bold text-[#1C1917]">Enter</kbd>
+            <span>নতুন সারি</span>
+            <span className="text-neutral-300">·</span>
+            <kbd className="px-1.5 py-0.5 rounded bg-white border border-[#D8D0C2] font-mono text-[10px] shadow-2xs font-bold text-[#1C1917]">↑ ↓ ← →</kbd>
+            <span>ঘোরাফেরা</span>
+          </div>
+        </div>
         <p className="italic">
           * সংখ্যার ঘরে বাংলা বা ইংরেজি সংখ্যা লিখলেই সাথে সাথে স্বয়ংক্রিয়ভাবে সঠিক যোগ-বিয়োগ ও হিসাব সম্পন্ন হয়।
         </p>
